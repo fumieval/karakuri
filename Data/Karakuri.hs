@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification, GADTs, GeneralizedNewtypeDeriving, TemplateHaskell, FlexibleContexts #-}
 
 module Data.Karakuri where
 
@@ -7,6 +7,10 @@ import Control.Applicative
 import Control.Comonad
 import Data.Functor.Identity
 import Control.Monad
+import Data.IntMap.Strict as IM
+import Control.Monad.Trans.Operational.Mini
+import Control.Monad.Operational.TH
+import Unsafe.Coerce
 
 data Karakuri m a = forall s. Karakuri (s -> m s) (s -> a) s
 
@@ -40,3 +44,26 @@ stateful' m s = Karakuri (return . execState m) id s
 
 effective :: Monad m => m a -> Karakuri m (Maybe a)
 effective m = Karakuri (const $ Just `liftM` m) id Nothing
+
+newtype Kao a = Kao Int
+
+data ButaiBase k a where
+    Register :: k r -> ButaiBase k (Kao r)
+    Look :: Kao r -> ButaiBase k r
+    Kill :: Kao r -> ButaiBase k ()
+    Tick :: ButaiBase k ()
+makeSingletons ''ButaiBase
+
+newtype ButaiT m a = ButaiT { unButaiT :: ReifiedProgramT (ButaiBase (Karakuri (ButaiT m))) m a } deriving (Monad, Applicative, Functor)
+
+runButaiT :: Monad m => ButaiT m a -> m a
+runButaiT = go 0 IM.empty . unButaiT where
+    go i m (Register k :>>= cont) = go (succ i) (IM.insert i (unsafeCoerce k) m) $ cont (Kao i)
+    go i m (Look k@(Kao j) :>>= cont) = go i m $ cont $ extract (unsafeCoerce (m IM.! j) `asKarakuriOf` k)
+    go i m (Kill (Kao j) :>>= cont) = go i (IM.delete j m) $ cont ()
+    go i m (Tick :>>= cont) = do
+        rs <- forM (IM.toAscList m) (\(i, m) -> (,) i `liftM` step m)
+        go i (IM.fromAscList rs) (cont ())
+
+    asKarakuriOf :: Karakuri m a -> p a -> Karakuri m a
+    asKarakuriOf x _ = x
