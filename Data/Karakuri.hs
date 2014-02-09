@@ -17,7 +17,7 @@ import Data.Functor.Identity
 import Control.Monad
 
 -- | Karakuri means automaton in Japanese.
-data Karakuri m a = forall s. Karakuri (s -> m s) (s -> a) s
+data Karakuri m a = forall s. Karakuri (s -> m s) (s -> a) !s
 
 -- | Run a 'Karakuri'.
 step :: Monad m => Karakuri m a -> m (Karakuri m a)

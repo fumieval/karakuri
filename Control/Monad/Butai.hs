@@ -19,48 +19,55 @@ import Control.Monad.Trans.Class
 
 newtype Key a = Kao Int
 
-data ButaiBase m a where
-    Register :: Karakuri m r -> ButaiBase m (Key r)
-    Look :: Key r -> ButaiBase m r
-    UpdateAll :: ButaiBase m ()
-makeSingletons ''ButaiBase
+data ButaiBase f m a where
+    Register :: f r -> ButaiBase f m (Key r)
+    Look :: Key r -> ButaiBase f m (f r)
+    Act :: (forall r. f r -> m (f r)) -> ButaiBase f m ()
 
-newtype ButaiT m a = ButaiT { unButaiT :: ReifiedProgramT (ButaiBase (ButaiT m)) m a } deriving (Monad, Applicative, Functor)
+register :: (ButaiBase f (ButaiT f m) :! n) => f r -> n (Key r)
+register f = singleton $ Register f
 
+look :: (ButaiBase f (ButaiT f m) :! n) => Key r -> n (f r)
+look k = singleton $ Look k
 
-instance MonadIO m => MonadIO (ButaiT m) where
+act :: (ButaiBase f (ButaiT f m) :! n) => (forall r. f r -> m (f r)) -> n ()
+act f = singleton $ Act f
+
+newtype ButaiT f m a = ButaiT { unButaiT :: ReifiedProgramT (ButaiBase f (ButaiT f m)) m a } deriving (Monad, Applicative, Functor)
+
+instance MonadIO m => MonadIO (ButaiT f m) where
     liftIO = lift . liftIO
 
-instance MonadTrans ButaiT where
+instance MonadTrans (ButaiT f) where
     lift = ButaiT . lift
 
-instance Monad m => ButaiBase (ButaiT m) :! ButaiT m where
+instance Monad m => ButaiBase f (ButaiT f m) :! ButaiT f m where
     singleton = ButaiT . singleton
 
-instance MonadState s m => MonadState s (ButaiT m) where
+instance MonadState s m => MonadState s (ButaiT f m) where
     get = lift get
     put = lift . put
 
-transButaiBase :: (forall a. m a -> n a) -> ButaiBase m a -> ButaiBase n a
+transButaiBase :: (forall a. m a -> n a) -> ButaiBase f m a -> ButaiBase f n a
 transButaiBase t (Register k) = Register (transKarakuri t k)
 transButaiBase _ (Look k) = Look k
-transButaiBase _ UpdateAll = UpdateAll
+transButaiBase t (Act f) = Act (t . f)
 
-transButaiT :: (Monad m, Monad n) => (forall x. m x -> n x) -> ButaiT m a -> ButaiT n a
+transButaiT :: (Monad m, Monad n) => (forall x. m x -> n x) -> ButaiT f m a -> ButaiT f n a
 transButaiT t = ButaiT . hoistReifiedT (transButaiBase (transButaiT t)) . transReifiedT t . unButaiT
 
 data Any
 
-runButaiT :: forall m a. Monad m => ButaiT m a -> m a
+runButaiT :: forall f m a. Monad m => ButaiT f m a -> m a
 runButaiT = go 0 IM.empty . unButaiT where
-    go :: Int -> IM.IntMap (Karakuri (ButaiT m) Any) -> ReifiedProgramT (ButaiBase (ButaiT m)) m a -> m a
+    go :: Int -> IM.IntMap (f (ButaiT f m) Any) -> ReifiedProgramT (ButaiBase (ButaiT f m)) m a -> m a
     go i m (Register k :>>= cont) = go (succ i) (IM.insert i (unsafeCoerce k) m) $ cont (Kao i)
     go i m (Look k@(Kao j) :>>= cont) = go i m $ cont $ extract (unsafeCoerce (m IM.! j) `asKarakuriOf` k)
-    go i m (UpdateAll :>>= cont) = do
-        rs <- runButaiT $ forM (IM.toAscList m) (\(i, m) -> (,) i `liftM` step m)
+    go i m (Act f :>>= cont) = do
+        rs <- runButaiT $ forM (IM.toAscList m) (\(i, m) -> (,) i `liftM` f m)
         go i (IM.fromAscList rs) (cont ())
     go i m (Lift a cont) = a >>= go i m . cont
     go _ _ (Return a) = return a
 
-    asKarakuriOf :: Karakuri m x -> p x -> Karakuri m x
+    asKarakuriOf :: f m x -> p x -> f m x
     asKarakuriOf x _ = x
