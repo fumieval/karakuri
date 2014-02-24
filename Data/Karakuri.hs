@@ -2,62 +2,55 @@
 
 module Data.Karakuri (
     Karakuri(..)
-    , Karakuri'
     , step
-    , transKarakuri
-    , stateful
-    , stateful'
-    , effective
+    , extract
+    , surface
+    , iterateM
     ) where
 
-import Control.Monad.Trans.State
-import Control.Applicative
-import Control.Comonad
-import Data.Functor.Identity
 import Control.Monad
+import Control.Comonad
+import Data.Profunctor
 
--- | Karakuri means automaton in Japanese.
-data Karakuri m a = forall s. Karakuri (s -> m s) (s -> a) !s
+-- | 'Karakuri' means automata in Japanese.
+-- It has three type parameters:
+-- * Underlying monad /m/
+-- * Exterior value /b/ for pushing
+-- * Public state /a/
+-- This structure aims to encapsulate states while reserving accessibility from the outside.
+data Karakuri m b a = Karakuri a (b -> Karakuri m b a) (m (Karakuri m b a))
 
--- | Run a 'Karakuri'.
-step :: Monad m => Karakuri m a -> m (Karakuri m a)
-step (Karakuri m f s) = Karakuri m f `liftM` m s
+step :: Karakuri m b a -> m (Karakuri m b a)
+step (Karakuri _ _ m) = m
+{-# INLINE step #-}
 
-instance Functor (Karakuri m) where
-    fmap f (Karakuri m g s) = Karakuri m (f . g) s
+-- | Lens-like interface to a 'Karakuri'. Note that it isn't necessarily a valid lens.
+surface :: Functor f => (a -> f b) -> Karakuri m b a -> f (Karakuri m b a)
+surface f (Karakuri a bk _) = fmap bk (f a)
+{-# INLINE surface #-}
+
+instance Monad m => Functor (Karakuri m b) where
+    fmap = rmap
     {-# INLINE fmap #-}
 
-instance Monad m => Applicative (Karakuri m) where
-    pure a = Karakuri return (const a) ()
+instance Monad m => Applicative (Karakuri m b) where
+    pure a = let k = Karakuri a (const k) (return k) in k
     {-# INLINE pure #-}
-    Karakuri m f s <*> Karakuri n g t = Karakuri
-        (\(a, b) -> m a >>= \r -> n b >>= \s -> return (r, s))
-        (\(x, y) -> f x (g y))
-        (s, t)
+    Karakuri f bj mj <*> Karakuri a bk mk = Karakuri (f a) (liftA2 (<*>) bj bk) (liftM2 (<*>) mj mk)
 
-instance Comonad (Karakuri m) where
-    extract (Karakuri _ f s) = f s
+instance Monad m => Comonad (Karakuri m b) where
+    extract (Karakuri a _ _) = a
     {-# INLINE extract #-}
-    extend k (Karakuri m f s) = Karakuri m (k . Karakuri m f) s
-    {-# INLINE extend #-}
+    extend f k@(Karakuri a bk mk) = Karakuri (f k) (extend f . bk) (extend f `liftM` mk)
 
-instance Monad m => ComonadApply (Karakuri m) where
+instance Monad m => ComonadApply (Karakuri m b) where
     (<@>) = (<*>)
     {-# INLINE (<@>) #-}
 
-transKarakuri :: (forall s. m s -> n s) -> Karakuri m a -> Karakuri n a
-transKarakuri t (Karakuri f e s) = Karakuri (t . f) e s
+instance Monad m => Profunctor (Karakuri m) where
+    rmap (Karakuri a bk mk) = Karakuri (f a) (rmap f . bk) (rmap f `liftM` mk)
+    lmap cb (Karakuri a bk mk) = Karakuri a (lmap cb . bk . cb) (lmap cb `liftM` mk)
 
--- | Create a 'Karakuri' from the stateful action.
-stateful :: Monad m => StateT s m () -> s -> Karakuri m s
-stateful m s = Karakuri (execStateT m) id s
-
-type Karakuri' = Karakuri Identity
-
--- | Create a 'Karakuri' from the stateful action.
-stateful' :: Monad m => State s () -> s -> Karakuri m s
-stateful' m s = Karakuri (return . execState m) id s
-
--- | Create a 'Karakuri' that performs the given action every time.
-effective :: Monad m => a -> m a -> Karakuri m a
-effective a m = Karakuri (const m) id a
+iterateM :: Monad m => (a -> m a) -> a -> Karakuri m a a
+iterateM f = let k a = Karakuri a k (k `liftM` f a) in k
+{-# INLINE iterateM #-}
