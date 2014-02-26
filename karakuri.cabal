@@ -17,6 +17,6 @@ library
   exposed-modules:     Data.Karakuri, Control.Monad.Butai
   -- other-modules:       
   other-extensions:    ExistentialQuantification, Rank2Types
-  build-depends:       base == 4.*, transformers >=0.3 && <0.4, comonad == 3.*, mtl == 2.*, containers, minioperational == 0.4.*
+  build-depends:       base == 4.*, transformers >=0.3 && <0.4, comonad == 3.*, mtl == 2.*, containers, minioperational == 0.4.*, profunctors, tagged
   -- hs-source-dirs:      
   default-language:    Haskell2010

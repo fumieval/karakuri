@@ -3,6 +3,7 @@
 module Data.Karakuri (
     Karakuri(..)
     , step
+    , transKarakuri
     , extract
     , surface
     , iterateM
@@ -11,6 +12,7 @@ module Data.Karakuri (
 import Control.Monad
 import Control.Comonad
 import Data.Profunctor
+import Control.Applicative
 
 -- | 'Karakuri' means automata in Japanese.
 -- It has three type parameters:
@@ -19,6 +21,11 @@ import Data.Profunctor
 -- * Public state /a/
 -- This structure aims to encapsulate states while reserving accessibility from the outside.
 data Karakuri m b a = Karakuri a (b -> Karakuri m b a) (m (Karakuri m b a))
+
+transKarakuri :: Monad n => (forall x. m x -> n x) -> Karakuri m b a -> Karakuri n b a
+transKarakuri t = go where
+    go (Karakuri a bk mk) = Karakuri a (go . bk) (liftM go $ t mk)
+{-# INLINE transKarakuri #-}
 
 step :: Karakuri m b a -> m (Karakuri m b a)
 step (Karakuri _ _ m) = m
@@ -48,7 +55,7 @@ instance Monad m => ComonadApply (Karakuri m b) where
     {-# INLINE (<@>) #-}
 
 instance Monad m => Profunctor (Karakuri m) where
-    rmap (Karakuri a bk mk) = Karakuri (f a) (rmap f . bk) (rmap f `liftM` mk)
+    rmap ab (Karakuri a bk mk) = Karakuri (ab a) (rmap ab . bk) (rmap ab `liftM` mk)
     lmap cb (Karakuri a bk mk) = Karakuri a (lmap cb . bk . cb) (lmap cb `liftM` mk)
 
 iterateM :: Monad m => (a -> m a) -> a -> Karakuri m a a
