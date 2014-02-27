@@ -2,7 +2,6 @@
 
 module Data.Karakuri (
     Karakuri(..)
-    , step
     , transKarakuri
     , extract
     , surface
@@ -20,16 +19,16 @@ import Control.Applicative
 -- * Exterior value /b/ for pushing
 -- * Public state /a/
 -- This structure aims to encapsulate states while reserving accessibility from the outside.
-data Karakuri m b a = Karakuri a (b -> Karakuri m b a) (m (Karakuri m b a))
+data Karakuri m b a = Karakuri
+    { look :: a
+    , feed :: b -> Karakuri m b a
+    , step :: m (Karakuri m b a)
+    }
 
 transKarakuri :: Monad n => (forall x. m x -> n x) -> Karakuri m b a -> Karakuri n b a
 transKarakuri t = go where
     go (Karakuri a bk mk) = Karakuri a (go . bk) (liftM go $ t mk)
 {-# INLINE transKarakuri #-}
-
-step :: Karakuri m b a -> m (Karakuri m b a)
-step (Karakuri _ _ m) = m
-{-# INLINE step #-}
 
 -- | Lens-like interface to a 'Karakuri'. Note that it isn't necessarily a valid lens.
 surface :: Functor f => (a -> f b) -> Karakuri m b a -> f (Karakuri m b a)
